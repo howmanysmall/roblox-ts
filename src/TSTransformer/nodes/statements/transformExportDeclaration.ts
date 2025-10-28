@@ -15,7 +15,7 @@ function isExportSpecifierValue(state: TransformState, element: ts.ExportSpecifi
 		return true;
 	}
 
-	const aliasSymbol = state.typeChecker.getSymbolAtLocation(element.name);
+	const aliasSymbol = state.getSymbol(element.name);
 	if (aliasSymbol && isSymbolOfValue(ts.skipAlias(aliasSymbol, state.typeChecker))) {
 		return true;
 	}

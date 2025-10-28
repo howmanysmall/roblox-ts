@@ -11,7 +11,7 @@ export function arrayBindingPatternContainsHoists(
 		// For non-identifiers, element.name must be a nested array/object binding pattern.
 		// For those cases, the hoisting logic is handled elsewhere and the variable here will be a tempId.
 		if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
-			const symbol = state.typeChecker.getSymbolAtLocation(element.name);
+			const symbol = state.getSymbol(element.name);
 			if (symbol) {
 				// isHoisted is marked inside checkVariableHoist
 				checkVariableHoist(state, element.name, symbol);

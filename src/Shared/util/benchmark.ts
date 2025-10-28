@@ -15,11 +15,23 @@ export function benchmarkSync(name: string, callback: () => void) {
 	benchmarkEnd(startTime);
 }
 
-export function benchmarkIfVerbose(name: string, callback: () => void) {
+export function benchmarkIfVerbose(name: string, callback: () => void): void;
+export function benchmarkIfVerbose<T>(name: string, callback: () => Promise<T>): Promise<T>;
+export function benchmarkIfVerbose<T>(name: string, callback: () => void | Promise<T>): void | Promise<T> {
 	if (LogService.verbose) {
-		benchmarkSync(name, callback);
+		const startTime = benchmarkStart(name);
+		const result = callback();
+		if (result instanceof Promise) {
+			return result.then(value => {
+				benchmarkEnd(startTime);
+				return value;
+			});
+		} else {
+			benchmarkEnd(startTime);
+			return result;
+		}
 	} else {
-		callback();
+		return callback();
 	}
 }
 

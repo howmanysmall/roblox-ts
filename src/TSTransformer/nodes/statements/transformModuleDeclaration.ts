@@ -44,7 +44,7 @@ function getValueDeclarationStatement(symbol: ts.Symbol) {
 }
 
 function transformNamespace(state: TransformState, name: ts.Identifier, body: ts.NamespaceBody) {
-	const symbol = state.typeChecker.getSymbolAtLocation(name);
+	const symbol = state.getSymbol(name);
 	assert(symbol);
 
 	validateIdentifier(state, name);
@@ -128,7 +128,7 @@ export function transformModuleDeclaration(state: TransformState, node: ts.Modul
 	}
 
 	// disallow merging
-	const symbol = state.typeChecker.getSymbolAtLocation(node.name);
+	const symbol = state.getSymbol(node.name);
 	if (symbol && hasMultipleDefinitions(symbol, declaration => isDeclarationOfNamespace(declaration))) {
 		DiagnosticService.addDiagnosticWithCache(
 			symbol,

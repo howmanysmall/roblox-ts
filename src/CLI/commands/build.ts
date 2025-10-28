@@ -115,6 +115,15 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 			.option("luau", {
 				boolean: true,
 				describe: "emit files with .luau extension",
+			})
+			.option("parallelRender", {
+				boolean: true,
+				describe: "enable parallel Luau AST rendering using workers",
+			})
+			.option("renderWorkers", {
+				number: true,
+				implies: "parallelRender",
+				describe: "number of render workers (default: CPU count - 1)",
 			}),
 
 	handler: async argv => {
@@ -142,7 +151,7 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				cleanup(pathTranslator);
 				copyInclude(data);
 				copyFiles(data, pathTranslator, new Set(getRootDirs(program.getCompilerOptions())));
-				const emitResult = compileFiles(
+				const emitResult = await compileFiles(
 					program.getProgram(),
 					data,
 					pathTranslator,

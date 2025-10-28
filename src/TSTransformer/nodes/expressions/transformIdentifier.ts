@@ -14,7 +14,7 @@ import ts from "typescript";
 export function transformIdentifierDefined(state: TransformState, node: ts.Identifier) {
 	const symbol = ts.isShorthandPropertyAssignment(node.parent)
 		? state.typeChecker.getShorthandAssignmentValueSymbol(node.parent)
-		: state.typeChecker.getSymbolAtLocation(node);
+		: state.getSymbol(node);
 	assert(symbol);
 
 	const replacementId = state.symbolToIdMap.get(symbol);
@@ -118,7 +118,7 @@ export function transformIdentifier(state: TransformState, node: ts.Identifier) 
 
 	const symbol = ts.isShorthandPropertyAssignment(node.parent)
 		? state.typeChecker.getShorthandAssignmentValueSymbol(node.parent)
-		: state.typeChecker.getSymbolAtLocation(node);
+		: state.getSymbol(node);
 	assert(symbol);
 
 	if (state.typeChecker.isUndefinedSymbol(symbol)) {

@@ -56,7 +56,7 @@ function getIgnoredExportSymbols(state: TransformState, sourceFile: ts.SourceFil
 				}
 			} else if (ts.isNamespaceExport(statement.exportClause)) {
 				// export * as id from "./module";
-				const idSymbol = state.typeChecker.getSymbolAtLocation(statement.exportClause.name);
+				const idSymbol = state.getSymbol(statement.exportClause.name);
 				if (idSymbol) {
 					ignoredSymbols.add(idSymbol);
 				}
@@ -201,7 +201,7 @@ function getLastNonCommentStatement(listNode?: luau.ListNode<luau.Statement>) {
  * @param node The sourcefile to convert to a Luau AST.
  */
 export function transformSourceFile(state: TransformState, node: ts.SourceFile) {
-	const symbol = state.typeChecker.getSymbolAtLocation(node);
+	const symbol = state.getSymbol(node);
 	assert(symbol);
 	state.setModuleIdBySymbol(symbol, luau.globals.exports);
 

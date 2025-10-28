@@ -20,7 +20,7 @@ export function transformEnumDeclaration(state: TransformState, node: ts.EnumDec
 		return luau.list.make<luau.Statement>();
 	}
 
-	const symbol = state.typeChecker.getSymbolAtLocation(node.name);
+	const symbol = state.getSymbol(node.name);
 	if (
 		symbol &&
 		hasMultipleDefinitions(

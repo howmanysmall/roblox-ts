@@ -50,26 +50,24 @@ describe("should compile tests project", () => {
 			const diagnosticName = fileBaseName.match(DIAGNOSTIC_TEST_NAME_REGEX)?.[1] as keyof typeof errors;
 			assert(diagnosticName && errors[diagnosticName], `Diagnostic test for unknown diagnostic ${fileBaseName}`);
 			const expectedId = (errors[diagnosticName] as DiagnosticFactory).id;
-			it(`should compile ${fileName} and report diagnostic ${diagnosticName}`, done => {
-				const emitResult = compileFiles(program.getProgram(), data, pathTranslator, [sourceFile]);
+			it(`should compile ${fileName} and report diagnostic ${diagnosticName}`, async () => {
+				const emitResult = await compileFiles(program.getProgram(), data, pathTranslator, [sourceFile]);
 				if (
 					emitResult.diagnostics.length > 0 &&
 					emitResult.diagnostics.every(d => getDiagnosticId(d) === expectedId)
 				) {
-					done();
+					return;
 				} else if (emitResult.diagnostics.length === 0) {
-					done(new Error(`Expected diagnostic ${diagnosticName} to be reported.`));
+					throw new Error(`Expected diagnostic ${diagnosticName} to be reported.`);
 				} else {
-					done(new Error("Unexpected diagnostics:\n" + formatDiagnostics(emitResult.diagnostics)));
+					throw new Error("Unexpected diagnostics:\n" + formatDiagnostics(emitResult.diagnostics));
 				}
 			});
 		} else {
-			it(`should compile ${fileName}`, done => {
-				const emitResult = compileFiles(program.getProgram(), data, pathTranslator, [sourceFile]);
+			it(`should compile ${fileName}`, async () => {
+				const emitResult = await compileFiles(program.getProgram(), data, pathTranslator, [sourceFile]);
 				if (emitResult.diagnostics.length > 0) {
-					done(new Error("\n" + formatDiagnostics(emitResult.diagnostics)));
-				} else {
-					done();
+					throw new Error("\n" + formatDiagnostics(emitResult.diagnostics));
 				}
 			});
 		}

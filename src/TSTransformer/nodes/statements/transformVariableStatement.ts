@@ -19,7 +19,7 @@ import ts from "typescript";
 export function transformVariable(state: TransformState, identifier: ts.Identifier, right?: luau.Expression) {
 	validateIdentifier(state, identifier);
 
-	const symbol = state.typeChecker.getSymbolAtLocation(identifier);
+	const symbol = state.getSymbol(identifier);
 	assert(symbol);
 
 	// export let

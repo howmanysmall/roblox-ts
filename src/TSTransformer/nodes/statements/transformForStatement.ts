@@ -112,7 +112,7 @@ function transformForStatementFallback(state: TransformState, node: ts.ForStatem
 
 	if (initializer && ts.isVariableDeclarationList(initializer)) {
 		for (const id of variables) {
-			const symbol = state.typeChecker.getSymbolAtLocation(id);
+			const symbol = state.getSymbol(id);
 			assert(symbol);
 			if (isIdWriteOrAsyncRead(state, node, id)) {
 				hasWriteOrAsyncRead.add(symbol);
@@ -130,7 +130,7 @@ function transformForStatementFallback(state: TransformState, node: ts.ForStatem
 			}
 
 			for (const id of variables) {
-				const symbol = state.typeChecker.getSymbolAtLocation(id);
+				const symbol = state.getSymbol(id);
 				assert(symbol);
 				if (hasWriteOrAsyncRead.has(symbol)) {
 					if (skipClone.has(symbol)) {
@@ -157,7 +157,7 @@ function transformForStatementFallback(state: TransformState, node: ts.ForStatem
 			}
 
 			for (const id of variables) {
-				const symbol = state.typeChecker.getSymbolAtLocation(id);
+				const symbol = state.getSymbol(id);
 				assert(symbol);
 				if (hasWriteOrAsyncRead.has(symbol)) {
 					let tempId: luau.TemporaryIdentifier;
@@ -300,7 +300,7 @@ function getOptimizedIncrementorStepValue(state: TransformState, incrementor: ts
 	if (
 		ts.isBinaryExpression(incrementor) &&
 		ts.isIdentifier(incrementor.left) &&
-		state.typeChecker.getSymbolAtLocation(incrementor.left) === idSymbol &&
+		state.getSymbol(incrementor.left) === idSymbol &&
 		incrementor.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken &&
 		ts.isNumericLiteral(incrementor.right) &&
 		isProbablyInteger(state, incrementor.right)
@@ -316,14 +316,14 @@ function getOptimizedIncrementorStepValue(state: TransformState, incrementor: ts
 	} else if (
 		(ts.isPostfixUnaryExpression(incrementor) || ts.isPrefixUnaryExpression(incrementor)) &&
 		ts.isIdentifier(incrementor.operand) &&
-		state.typeChecker.getSymbolAtLocation(incrementor.operand) === idSymbol &&
+		state.getSymbol(incrementor.operand) === idSymbol &&
 		incrementor.operator === ts.SyntaxKind.PlusPlusToken
 	) {
 		return 1;
 	} else if (
 		(ts.isPostfixUnaryExpression(incrementor) || ts.isPrefixUnaryExpression(incrementor)) &&
 		ts.isIdentifier(incrementor.operand) &&
-		state.typeChecker.getSymbolAtLocation(incrementor.operand) === idSymbol &&
+		state.getSymbol(incrementor.operand) === idSymbol &&
 		incrementor.operator === ts.SyntaxKind.MinusMinusToken
 	) {
 		return -1;
@@ -405,7 +405,7 @@ function transformForStatementOptimized(state: TransformState, node: ts.ForState
 		return undefined;
 	}
 
-	const idSymbol = state.typeChecker.getSymbolAtLocation(decName);
+	const idSymbol = state.getSymbol(decName);
 	if (!idSymbol) {
 		return undefined;
 	}

@@ -189,7 +189,7 @@ function createBoilerplate(
 
 function isClassHoisted(state: TransformState, node: ts.ClassLikeDeclaration) {
 	if (node.name) {
-		const symbol = state.typeChecker.getSymbolAtLocation(node.name);
+		const symbol = state.getSymbol(node.name);
 		assert(symbol);
 		return state.isHoisted.get(symbol) === true;
 	}

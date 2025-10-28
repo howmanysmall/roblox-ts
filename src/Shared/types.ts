@@ -15,6 +15,8 @@ export interface ProjectOptions {
 	optimizedLoops: boolean;
 	allowCommentDirectives: boolean;
 	luau: boolean;
+	parallelRender: boolean;
+	renderWorkers: number | undefined;
 }
 
 export interface ProjectData {
@@ -25,6 +27,7 @@ export interface ProjectData {
 	rojoConfigPath: string | undefined;
 	tsConfigPath: string;
 	transformerWatcher?: TransformerWatcher;
+	workerPool?: any; // WorkerPool from Project/classes/WorkerPool
 }
 
 export interface TransformerWatcher {

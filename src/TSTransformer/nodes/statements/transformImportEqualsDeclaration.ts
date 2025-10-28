@@ -15,7 +15,7 @@ export function transformImportEqualsDeclaration(state: TransformState, node: ts
 
 		const statements = luau.list.make<luau.Statement>();
 
-		const aliasSymbol = state.typeChecker.getSymbolAtLocation(node.name);
+		const aliasSymbol = state.getSymbol(node.name);
 		assert(aliasSymbol);
 		if (isSymbolOfValue(ts.skipAlias(aliasSymbol, state.typeChecker))) {
 			luau.list.pushList(

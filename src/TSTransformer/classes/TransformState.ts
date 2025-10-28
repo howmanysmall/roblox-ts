@@ -182,7 +182,21 @@ export class TransformState {
 
 	private getTypeCache = new Map<ts.Node, ts.Type>();
 	public getType(node: ts.Node) {
-		return getOrSetDefault(this.getTypeCache, node, () => this.typeChecker.getTypeAtLocation(skipUpwards(node)));
+		return getOrSetDefault(this.getTypeCache, node, () => this.typeChecker.getTypeAtLocation(this.skipUpwards(node)));
+	}
+
+	private symbolCache = new Map<ts.Node, ts.Symbol | undefined>();
+	public getSymbol(node: ts.Node) {
+		return getOrSetDefault(this.symbolCache, node, () => this.typeChecker.getSymbolAtLocation(node));
+	}
+
+	private skipUpwardsCache = new WeakMap<ts.Node, ts.Node>();
+	public skipUpwards(node: ts.Node): ts.Node {
+		const cached = this.skipUpwardsCache.get(node);
+		if (cached) return cached;
+		const result = skipUpwards(node);
+		this.skipUpwardsCache.set(node, result);
+		return result;
 	}
 
 	public usesRuntimeLib = false;
@@ -329,7 +343,7 @@ export class TransformState {
 
 	private getModuleSymbolFromNode(node: ts.Node) {
 		const moduleAncestor = getModuleAncestor(node);
-		const exportSymbol = this.typeChecker.getSymbolAtLocation(
+		const exportSymbol = this.getSymbol(
 			ts.isSourceFile(moduleAncestor) ? moduleAncestor : moduleAncestor.name,
 		);
 		assert(exportSymbol);

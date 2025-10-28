@@ -1,8 +1,10 @@
-import { renderAST } from "@roblox-ts/luau-ast";
+import luau, { renderAST } from "@roblox-ts/luau-ast";
 import { PathTranslator } from "@roblox-ts/path-translator";
 import { NetworkType, RbxPath, RojoResolver } from "@roblox-ts/rojo-resolver";
+import { createHash } from "crypto";
 import fs from "fs-extra";
 import path from "path";
+import { WorkerPool } from "Project/classes/WorkerPool";
 import { checkFileName } from "Project/functions/checkFileName";
 import { checkRojoConfig } from "Project/functions/checkRojoConfig";
 import { createNodeModulesPathMapping } from "Project/functions/createNodeModulesPathMapping";
@@ -23,6 +25,63 @@ import { MultiTransformState, transformSourceFile, TransformState } from "TSTran
 import { DiagnosticService } from "TSTransformer/classes/DiagnosticService";
 import { createTransformServices } from "TSTransformer/util/createTransformServices";
 import ts from "typescript";
+
+// Cache for RojoResolver instances to avoid re-parsing config files
+interface RojoResolverCacheEntry {
+	resolver: RojoResolver;
+	mtime: number;
+}
+
+const rojoResolverCache = new Map<string, RojoResolverCacheEntry>();
+const syntheticResolverCache = new Map<string, RojoResolver>();
+
+// Cache for file content hashes to avoid re-reading files for comparison
+const fileHashCache = new Map<string, string>();
+
+// Cache for nodeModulesPathMapping to avoid re-walking node_modules
+const nodeModulesPathMappingCache = new Map<string, Map<string, string>>();
+
+// Cache for incremental AST transformation - maps file path + source hash to rendered output
+interface ASTCacheEntry {
+	sourceHash: string;
+	output: string;
+	dependencies: Set<string>; // Files that this file imports
+}
+const astCache = new Map<string, ASTCacheEntry>();
+
+function getOrCreateWorkerPool(data: ProjectData): WorkerPool {
+	if (!data.workerPool) {
+		data.workerPool = new WorkerPool(data.projectOptions.renderWorkers);
+	}
+	return data.workerPool;
+}
+
+function getCachedRojoResolver(configPath: string): RojoResolver {
+	try {
+		const currentMtime = fs.statSync(configPath).mtimeMs;
+		const cached = rojoResolverCache.get(configPath);
+
+		if (cached && cached.mtime === currentMtime) {
+			return cached.resolver;
+		}
+
+		const resolver = RojoResolver.fromPath(configPath);
+		rojoResolverCache.set(configPath, { resolver, mtime: currentMtime });
+		return resolver;
+	} catch {
+		// If stat fails, create fresh resolver
+		return RojoResolver.fromPath(configPath);
+	}
+}
+
+function getCachedSyntheticResolver(outDir: string): RojoResolver {
+	let resolver = syntheticResolverCache.get(outDir);
+	if (!resolver) {
+		resolver = RojoResolver.synthetic(outDir);
+		syntheticResolverCache.set(outDir, resolver);
+	}
+	return resolver;
+}
 
 function inferProjectType(data: ProjectData, rojoResolver: RojoResolver): ProjectType {
 	if (data.isPackage) {
@@ -46,12 +105,12 @@ function emitResultFailure(messageText: string): ts.EmitResult {
  *
  * writes rendered Luau source to the out directory.
  */
-export function compileFiles(
+export async function compileFiles(
 	program: ts.Program,
 	data: ProjectData,
 	pathTranslator: PathTranslator,
 	sourceFiles: Array<ts.SourceFile>,
-): ts.EmitResult {
+): Promise<ts.EmitResult> {
 	const compilerOptions = program.getCompilerOptions();
 
 	const multiTransformState = new MultiTransformState();
@@ -59,8 +118,8 @@ export function compileFiles(
 	const outDir = compilerOptions.outDir!;
 
 	const rojoResolver = data.rojoConfigPath
-		? RojoResolver.fromPath(data.rojoConfigPath)
-		: RojoResolver.synthetic(outDir);
+		? getCachedRojoResolver(data.rojoConfigPath)
+		: getCachedSyntheticResolver(outDir);
 
 	for (const warning of rojoResolver.getWarnings()) {
 		LogService.warn(warning);
@@ -74,8 +133,15 @@ export function compileFiles(
 		}
 	}
 
-	const pkgRojoResolvers = compilerOptions.typeRoots!.map(RojoResolver.synthetic);
-	const nodeModulesPathMapping = createNodeModulesPathMapping(compilerOptions.typeRoots!);
+	const pkgRojoResolvers = compilerOptions.typeRoots!.map(getCachedSyntheticResolver);
+
+	// Cache nodeModulesPathMapping based on typeRoots to avoid re-walking directories
+	const typeRootsCacheKey = compilerOptions.typeRoots!.join("|");
+	let nodeModulesPathMapping = nodeModulesPathMappingCache.get(typeRootsCacheKey);
+	if (!nodeModulesPathMapping) {
+		nodeModulesPathMapping = createNodeModulesPathMapping(compilerOptions.typeRoots!);
+		nodeModulesPathMappingCache.set(typeRootsCacheKey, nodeModulesPathMapping);
+	}
 
 	const projectType = data.projectOptions.type ?? inferProjectType(data, rojoResolver);
 
@@ -102,6 +168,7 @@ export function compileFiles(
 	LogService.writeLineIfVerbose(`compiling as ${projectType}..`);
 
 	const fileWriteQueue = new Array<{ sourceFile: ts.SourceFile; source: string }>();
+	const renderJobs = new Array<{ id: number; sourceFile: ts.SourceFile; luauAST: luau.List<luau.Statement> }>();
 	const progressMaxLength = `${sourceFiles.length}/${sourceFiles.length}`.length;
 
 	let proxyProgram = program;
@@ -148,6 +215,9 @@ export function compileFiles(
 	const typeChecker = proxyProgram.getTypeChecker();
 	const services = createTransformServices(typeChecker);
 
+	// Track files modified in this compilation for cache invalidation
+	const modifiedFiles = new Set<string>();
+
 	for (let i = 0; i < sourceFiles.length; i++) {
 		const sourceFile = proxyProgram.getSourceFile(sourceFiles[i].fileName);
 		assert(sourceFile);
@@ -157,53 +227,174 @@ export function compileFiles(
 			DiagnosticService.addDiagnostics(getCustomPreEmitDiagnostics(data, sourceFile));
 			if (DiagnosticService.hasErrors()) return;
 
-			const transformState = new TransformState(
-				proxyProgram,
-				data,
-				services,
-				pathTranslator,
-				multiTransformState,
-				compilerOptions,
-				rojoResolver,
-				pkgRojoResolvers,
-				nodeModulesPathMapping,
-				runtimeLibRbxPath,
-				typeChecker,
-				projectType,
-				sourceFile,
-			);
+			// Incremental AST caching: check if we can reuse cached transformation
+			const sourceText = sourceFile.getFullText();
+			const sourceHash = createHash("sha256").update(sourceText).digest("hex");
+			const cachedEntry = astCache.get(sourceFile.fileName);
 
-			const luauAST = transformSourceFile(transformState, sourceFile);
-			if (DiagnosticService.hasErrors()) return;
+			// Check if cache is valid: same hash and no modified dependencies
+			const canUseCache =
+				cachedEntry &&
+				cachedEntry.sourceHash === sourceHash &&
+				!Array.from(cachedEntry.dependencies).some(dep => modifiedFiles.has(dep));
 
-			const source = renderAST(luauAST);
+			let source: string | undefined;
 
-			fileWriteQueue.push({ sourceFile, source });
+			if (canUseCache) {
+				// Use cached output
+				source = cachedEntry.output;
+			} else {
+				// Transform and cache
+				const transformState = new TransformState(
+					proxyProgram,
+					data,
+					services,
+					pathTranslator,
+					multiTransformState,
+					compilerOptions,
+					rojoResolver,
+					pkgRojoResolvers,
+					nodeModulesPathMapping,
+					runtimeLibRbxPath,
+					typeChecker,
+					projectType,
+					sourceFile,
+				);
+
+				const luauAST = transformSourceFile(transformState, sourceFile);
+				if (DiagnosticService.hasErrors()) return;
+
+				// Check if we should use parallel rendering
+				const shouldUseParallelRender = data.projectOptions.parallelRender && sourceFiles.length >= 10;
+
+				if (shouldUseParallelRender) {
+					// Queue for parallel rendering
+					renderJobs.push({ id: i, sourceFile, luauAST });
+					// Will render in batch after transformation loop
+				} else {
+					// Fallback to sync rendering
+					source = renderAST(luauAST);
+				}
+
+				// Track dependencies (imported files)
+				const dependencies = new Set<string>();
+				const resolvedModules = (sourceFile as any).resolvedModules as
+					| Map<string, ts.ResolvedModuleFull | undefined>
+					| undefined;
+				if (resolvedModules) {
+					resolvedModules.forEach((resolved: ts.ResolvedModuleFull | undefined) => {
+						if (resolved?.resolvedFileName) {
+							dependencies.add(resolved.resolvedFileName);
+						}
+					});
+				}
+
+				// Update cache (only for sync rendering)
+				if (!shouldUseParallelRender && source) {
+					astCache.set(sourceFile.fileName, {
+						sourceHash,
+						output: source,
+						dependencies,
+					});
+				}
+
+				modifiedFiles.add(sourceFile.fileName);
+			}
+
+			// Only push to write queue if we rendered synchronously
+			if (source !== undefined) {
+				fileWriteQueue.push({ sourceFile, source });
+			}
 		});
 	}
 
 	if (DiagnosticService.hasErrors()) return { emitSkipped: true, diagnostics: DiagnosticService.flush() };
 
+	// Batch render ASTs in parallel if enabled
+	if (renderJobs.length > 0) {
+		await benchmarkIfVerbose("rendering ASTs in parallel", async () => {
+			try {
+				const workerPool = getOrCreateWorkerPool(data);
+				LogService.writeLineIfVerbose(
+					`rendering ${renderJobs.length} files using ${workerPool.getWorkerCount()} workers`,
+				);
+
+				const renderResults = await workerPool.renderAll(
+					renderJobs.map(job => ({ id: job.id, luauAST: job.luauAST })),
+				);
+
+				// Sort by ID to maintain order and push to write queue
+				for (const result of renderResults.sort((a, b) => a.id - b.id)) {
+					const job = renderJobs[result.id];
+					fileWriteQueue.push({ sourceFile: job.sourceFile, source: result.source });
+
+					// Update cache with rendered output
+					const sourceText = job.sourceFile.getFullText();
+					const sourceHash = createHash("sha256").update(sourceText).digest("hex");
+					const dependencies = new Set<string>();
+					const resolvedModules = (job.sourceFile as any).resolvedModules as
+						| Map<string, ts.ResolvedModuleFull | undefined>
+						| undefined;
+					if (resolvedModules) {
+						resolvedModules.forEach((resolved: ts.ResolvedModuleFull | undefined) => {
+							if (resolved?.resolvedFileName) {
+								dependencies.add(resolved.resolvedFileName);
+							}
+						});
+					}
+					astCache.set(job.sourceFile.fileName, {
+						sourceHash,
+						output: result.source,
+						dependencies,
+					});
+				}
+			} catch (error) {
+				// If parallel rendering fails, fall back to synchronous rendering
+				LogService.warn(`Parallel rendering failed, falling back to synchronous: ${error}`);
+				for (const job of renderJobs) {
+					const source = renderAST(job.luauAST);
+					fileWriteQueue.push({ sourceFile: job.sourceFile, source });
+				}
+			}
+		});
+	}
+
 	const emittedFiles = new Array<string>();
 	if (fileWriteQueue.length > 0) {
-		benchmarkIfVerbose("writing compiled files", () => {
+		await benchmarkIfVerbose("writing compiled files", async () => {
 			const afterDeclarations = compilerOptions.declaration
 				? [transformTypeReferenceDirectives, transformPathsTransformer(program, {})]
 				: undefined;
-			for (const { sourceFile, source } of fileWriteQueue) {
+
+			// Parallelize file writes with hash-based change detection
+			const writePromises = fileWriteQueue.map(async ({ sourceFile, source }) => {
 				const outPath = pathTranslator.getOutputPath(sourceFile.fileName);
-				if (
-					!data.projectOptions.writeOnlyChanged ||
-					!fs.pathExistsSync(outPath) ||
-					fs.readFileSync(outPath).toString() !== source
-				) {
-					fs.outputFileSync(outPath, source);
-					emittedFiles.push(outPath);
+				const sourceHash = createHash("sha256").update(source).digest("hex");
+
+				let needsWrite = !data.projectOptions.writeOnlyChanged;
+				if (!needsWrite) {
+					const cachedHash = fileHashCache.get(outPath);
+					if (!cachedHash || cachedHash !== sourceHash) {
+						needsWrite = true;
+					}
 				}
-				if (compilerOptions.declaration) {
-					proxyProgram.emit(sourceFile, ts.sys.writeFile, undefined, true, { afterDeclarations });
+
+				if (needsWrite) {
+					await fs.outputFile(outPath, source);
+					fileHashCache.set(outPath, sourceHash);
+
+					if (compilerOptions.declaration) {
+						proxyProgram.emit(sourceFile, ts.sys.writeFile, undefined, true, { afterDeclarations });
+					}
+
+					return outPath;
 				}
-			}
+
+				return undefined;
+			});
+
+			const results = await Promise.all(writePromises);
+			emittedFiles.push(...results.filter((path): path is string => path !== undefined));
 		});
 	}
 

@@ -43,7 +43,7 @@ function transformExportDefault(state: TransformState, node: ts.ExportAssignment
 }
 
 export function transformExportAssignment(state: TransformState, node: ts.ExportAssignment) {
-	const symbol = state.typeChecker.getSymbolAtLocation(node.expression);
+	const symbol = state.getSymbol(node.expression);
 	if (symbol && isSymbolMutable(state, symbol)) {
 		DiagnosticService.addDiagnostic(errors.noExportAssignmentLet(node));
 	}

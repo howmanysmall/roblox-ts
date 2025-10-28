@@ -34,7 +34,7 @@ export function ensureTransformOrder(
 		let isConstVar = false;
 		const exp = nodes[i];
 		if (ts.isIdentifier(exp)) {
-			const symbol = state.typeChecker.getSymbolAtLocation(exp);
+			const symbol = state.getSymbol(exp);
 			if (symbol && !isSymbolMutable(state, symbol)) {
 				isConstVar = true;
 			}

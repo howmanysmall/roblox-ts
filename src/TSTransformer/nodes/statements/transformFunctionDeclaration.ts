@@ -30,7 +30,7 @@ export function transformFunctionDeclaration(state: TransformState, node: ts.Fun
 
 	let localize = isExportDefault;
 	if (node.name) {
-		const symbol = state.typeChecker.getSymbolAtLocation(node.name);
+		const symbol = state.getSymbol(node.name);
 		assert(symbol);
 		localize = state.isHoisted.get(symbol) !== true;
 	}
